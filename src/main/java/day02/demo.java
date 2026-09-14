@@ -1,131 +1,210 @@
 package day02;
 
-import org.apache.commons.io.FileUtils;
 import org.apache.http.NameValuePair;
-import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
-import java.util.Scanner;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+/**
+ * @Author: 岑正茂
+ * @CreateTime: 2026-09-14
+ * @Version: 1.0
+ *
+ * 第二天练习主程序：
+ *   1. 通过 HttpClient(POST) 获取列表页内容
+ *   2. Jsoup  精准/模糊定位：列表标题、详情链接
+ *   3. 正则表达式：解析发布时间、提取 url_view 链接参数
+ *   4. 通过 HttpClient(GET) 获取详情页内容
+ *   5. Jsoup  获取详情正文 html
+ *   以上数据全部在控制台打印
+ *
+ * 练习网站：安徽省港航集团有限公司 - 通知通告列表
+ *   http://www.ahsgh.com/ahghjtweb/web/list
+ */
 public class demo {
-    private static final String URL = "http://www.ahsgh.com/ahghjtweb/web/list";    //访问URL
-    private static final String SAVE_DIR = "E:\\result\\day02"; // 本地保存目录
-    private static final String[] USER_AGENTS = {
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0"
-    };          //UA列表
-    private static final Random RANDOM = new Random();
+
+    /* 列表页地址（POST） */
+    private static final String LIST_URL = "http://www.ahsgh.com/ahghjtweb/web/list";
+    /* 详情页地址（GET，参数用正则从 url_view 中提取） */
+    private static final String VIEW_URL = "http://www.ahsgh.com/ahghjtweb/web/view";
+    /* 请求头 */
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    /* ========== 正则：发布时间（列表页 <i class="fr">2026-09-14</i>）========== */
+    private static final Pattern TIME_PATTERN = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
+    /* ========== 正则：url_view('strId','strColId','strWebSiteId') 三个参数 ========== */
+    private static final Pattern URL_VIEW_PATTERN =
+            Pattern.compile("url_view\\('(.*?)',\\s*'(.*?)',\\s*'(.*?)'\\)");
 
     public static void main(String[] args) throws IOException {
-        /*配置httpclient*/
-        RequestConfig config = RequestConfig.custom()
-                .setSocketTimeout(10000)
-                .setConnectTimeout(10000)
-                .setConnectionRequestTimeout(10 * 1000)
-                .build();
-
-
-        // 创建本地目录
-        File dir = new File(SAVE_DIR);
-        if (!dir.exists()) {
-            dir.mkdirs();
+        /* 1. HttpClient 抓取列表页 */
+        String listHtml = postListPage(1);
+        if (listHtml == null || listHtml.isEmpty()) {
+            System.err.println("列表页抓取失败，程序退出");
+            return;
         }
+        System.out.println("=================== 列表页抓取成功，内容长度：" + listHtml.length() + " ===================");
 
-        // 创建 HttpClient (try-with-resources 会在最后自动关闭)
-        try (CloseableHttpClient httpclient = HttpClients.custom()
-                .setDefaultRequestConfig(config)
-                .build()) {
+        /* 2. Jsoup 精准定位：列表容器 ul.tab01open.tab01tca 下的每一个 li */
+        Document listDoc = Jsoup.parse(listHtml);
+        Elements items = listDoc.select("ul.tab01open.tab01tca li");
+        System.out.println("本次共解析到 " + items.size() + " 条记录\n");
 
-            /*当前手动输入，后续可以使用jsoup动态获取totalPage*/
-            System.out.println("请输入被爬取网页的总页数：");
-            Scanner sc = new Scanner(System.in);
-            int totalPage = sc.nextInt();
+        /* 3. 遍历每一条记录：解析 标题 / 发布时间 / 详情链接 / 详情正文html */
+        int index = 0;
+        for (Element item : items) {
+            index++;
+            System.out.println("============================== 第 " + index + " 条 ==============================");
 
-            // 3. 循环爬取（这里改成了 <=，否则会漏掉最后一页）
-            for (int page = 1; page <= totalPage; page++) {
-                System.out.println("========当前正在爬取第" + page + "页数据==========");
+            /* 3.1 Jsoup 精准定位标题：li 下的 h2.fl（class 精确匹配） */
+            String title = item.select("h2.fl").first().text().trim();
+            System.out.println("【标题】" + title);
 
-                // 调用爬虫方法，传入当前页码 page
-                String html = crawler(httpclient, page, URL);
+            /* 3.2 正则解析发布时间：<i class="fr">2026-09-14</i> */
+            String iHtml = item.select("i.fr").first().outerHtml();
+            String publishTime = parseTimeByRegex(iHtml);
+            System.out.println("【发布时间】" + publishTime);
 
-                //先进行非空判断
-                if (html == null || html.isEmpty()) {
-                    System.err.println("第" + page + "页无数据或请求失败，跳过!");
-                    continue; // 失败就跳过这一页，不中断整个程序
-                }
+            /* 3.3 Jsoup 模糊定位链接：a[href*=url_view]（属性值包含 url_view 即可）
+             *     再用正则提取三个参数，拼接出真实详情地址 */
+            Element aTag = item.select("a[href*=url_view]").first();
+            String detailUrl = buildDetailUrl(aTag.attr("href"));
+            System.out.println("【详情链接】" + detailUrl);
 
-                System.out.println("第" + page + "页爬取成功，长度" + html.length());
-
-                //  随机访问间隔
-                if (page < totalPage) {
-                    long sleepTime = 2000 + RANDOM.nextInt(3000);
-                    System.out.println("等待" + sleepTime + "ms 后继续...");
-                    try {
-                        Thread.sleep(sleepTime);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
+            /* 3.4 通过 HttpClient(GET) 获取详情页，Jsoup 获取正文 html */
+            String detailHtml = getDetailPage(detailUrl);
+            if (detailHtml != null) {
+                String contentHtml = parseContentHtml(detailHtml);
+                System.out.println("【正文html】" + (contentHtml == null ? "解析失败" : contentHtml));
+                System.out.println("【正文纯文本】" + (contentHtml == null ? "" : Jsoup.parse(contentHtml).text()));
+            } else {
+                System.out.println("【正文html】详情页抓取失败");
             }
+            System.out.println();
         }
-
     }
 
     /**
-     * 爬取单页数据
-     * @param httpClient HttpClient对象
-     * @param currentPage 当前页码
-     * @param URL 目标URL
+     * HttpClient POST 抓取列表页（与第一天 demo4 相同参数）
      */
-    private static String crawler(CloseableHttpClient httpClient, int currentPage, String URL) throws IOException {
+    private static String postListPage(int page) throws IOException {
+        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+            HttpPost httpPost = new HttpPost(LIST_URL);
 
+            List<NameValuePair> params = new ArrayList<>();
+            params.add(new BasicNameValuePair("listPage", "list"));
+            params.add(new BasicNameValuePair("intCurPage", String.valueOf(page)));
+            params.add(new BasicNameValuePair("intPageSize", "10"));
+            params.add(new BasicNameValuePair("strColId", "20782f569264489f87995ad0773ff626"));
+            params.add(new BasicNameValuePair("strWebSiteId", "4c5fcf57602b48a0acde5a4ef3ede48d"));
+            params.add(new BasicNameValuePair("nowPage", "1"));
+            httpPost.setEntity(new UrlEncodedFormEntity(params, StandardCharsets.UTF_8));
 
-        HttpPost httpPost = new HttpPost(URL);
-        List<NameValuePair> params = new ArrayList<>();
-        params.add(new BasicNameValuePair("listPage", "list"));
-        params.add(new BasicNameValuePair("intCurPage", String.valueOf(currentPage)));
-        params.add(new BasicNameValuePair("intPageSize", "10"));
-        params.add(new BasicNameValuePair("strColId", "20782f569264489f87995ad0773ff626"));
-        params.add(new BasicNameValuePair("strWebSiteId", "4c5fcf57602b48a0acde5a4ef3ede48d"));
-        params.add(new BasicNameValuePair("nowPage", "1"));
+            httpPost.setHeader("User-Agent", USER_AGENT);
+            httpPost.setHeader("Referer", LIST_URL);
+            httpPost.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+            httpPost.setHeader("accept-language", "zh-CN,zh;q=0.9,en;q=0.8");
 
-        UrlEncodedFormEntity entity = new UrlEncodedFormEntity(params, StandardCharsets.UTF_8);
-        httpPost.setEntity(entity);
-
-        httpPost.setHeader("User-Agent", USER_AGENTS[RANDOM.nextInt(USER_AGENTS.length)]);
-        httpPost.setHeader("Referer", "http://www.ahsgh.com/ahghjtweb/web/list");
-        httpPost.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
-        httpPost.setHeader("accept-language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6");
-
-        try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-            int statusCode = response.getStatusLine().getStatusCode();
-            if (statusCode == 200) {
-                return EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-            } else if (statusCode == 403 || statusCode == 429) {
-                System.err.println("被拒绝访问，状态码：" + statusCode + "，建议更换ip或者增大访问间隔");
-                return null;
-            } else {
-                System.err.println("请求失败，状态码：" + statusCode);
-                return null;
+            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                if (response.getStatusLine().getStatusCode() == 200) {
+                    return EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                }
             }
         }
-        //不能在这里使用finally代码块关闭httpclient，不然循环无法进行
+        return null;
+    }
+
+    /**
+     * HttpClient GET 抓取详情页
+     */
+    private static String getDetailPage(String detailUrl) throws IOException {
+        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+            HttpGet httpGet = new HttpGet(detailUrl);
+            httpGet.setHeader("User-Agent", USER_AGENT);
+            httpGet.setHeader("Referer", LIST_URL);
+
+            try (CloseableHttpResponse response = httpClient.execute(httpGet)) {
+                if (response.getStatusLine().getStatusCode() == 200) {
+                    return EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 正则解析发布时间：匹配 yyyy-MM-dd
+     */
+    private static String parseTimeByRegex(String html) {
+        Matcher matcher = TIME_PATTERN.matcher(html);
+        return matcher.find() ? matcher.group() : "未匹配到时间";
+    }
+
+    /**
+     * 正则提取 url_view('strId','strColId','strWebSiteId') 三个参数，拼接真实详情地址
+     */
+    private static String buildDetailUrl(String href) {
+        Matcher matcher = URL_VIEW_PATTERN.matcher(href);
+        if (matcher.find()) {
+            return VIEW_URL + "?strId=" + matcher.group(1)
+                    + "&strColId=" + matcher.group(2)
+                    + "&strWebSiteId=" + matcher.group(3);
+        }
+        return href;
+    }
+
+    /**
+     * Jsoup 定位详情正文：
+     *   结构上正文位于 <!-- 正文内容 --> 与 <!-- 文后 --> 两个注释之间；
+     *   由于正文里的 <p> 嵌套是非法的，jsoup 会自动闭合，导致正文被拆成多个兄弟节点，
+     *   因此用注释锚点把两段注释之间的所有元素拼接起来，得到完整正文 html
+     */
+    private static String parseContentHtml(String detailHtml) {
+        Document detailDoc = Jsoup.parse(detailHtml);
+        Element articleConca = detailDoc.selectFirst(".article-conca");
+        if (articleConca == null) {
+            return null;
+        }
+        StringBuilder contentHtml = new StringBuilder();
+        boolean startCollect = false;
+        for (org.jsoup.nodes.Node child : articleConca.childNodes()) {
+            if (child instanceof org.jsoup.nodes.Comment) {
+                String data = ((org.jsoup.nodes.Comment) child).getData();
+                if (data.contains("正文内容")) {
+                    startCollect = true;   // 遇到正文起点注释，开始收集
+                    continue;
+                }
+                if (data.contains("文后") && startCollect) {
+                    break;                 // 遇到文后注释，结束收集
+                }
+            }
+            if (startCollect && child instanceof Element) {
+                Element el = (Element) child;
+                /* 跳过 jsoup 自动闭合产生的空 <p></p>（无子节点且无文本） */
+                if (el.childNodeSize() == 0 && el.text().isEmpty()) {
+                    continue;
+                }
+                contentHtml.append(el.outerHtml());
+            }
+        }
+        return contentHtml.length() == 0 ? null : contentHtml.toString();
     }
 }

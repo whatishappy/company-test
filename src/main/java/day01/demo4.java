@@ -1,3 +1,5 @@
+package day01;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.config.RequestConfig;

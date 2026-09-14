@@ -42,6 +42,7 @@ public class demo3 {
 
              /*获取请求体中内容*/
             String context = EntityUtils.toString(response.getEntity(), "UTF-8");
+            System.out.println(context);
             /*将请求体内容写入本地文件中*/
             FileUtils.writeStringToFile(new File("E:\\result\\demo(post).html"),context);
             System.out.println("内容长度为：" + context.length());

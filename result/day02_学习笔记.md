@@ -63,7 +63,7 @@ HttpClient(GET) 抓详情页
 
 ```bash
 # 主练习：HttpClient + Jsoup + 正则
-mvn compile exec:java -Dexec.mainClass=day02.demo
+mvn compile exec:java -Dexec.mainClass=day02.demo_Jsoup
 
 # XPath 解析演示
 mvn compile exec:java -Dexec.mainClass=day02.XPathDemo

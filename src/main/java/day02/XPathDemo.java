@@ -30,12 +30,12 @@ import java.util.regex.Pattern;
  *   对比点：
  *     精准定位：@class='fl'   （属性值完全相等）
  *     模糊定位：contains(@class,'fl')、contains(@href,'url_view') （属性包含）
- *   XPath 语法速记：/ 直接子节点，// 任意子孙节点，@ 属性，[] 条件，text() 文本
+ *   XPath 语法：/ 直接子节点，// 任意子孙节点，@ 属性，[] 条件，text() 文本
  */
 public class XPathDemo {
 
-    private static final String LIST_URL = "http://www.ahsgh.com/ahghjtweb/web/list";
-    private static final String VIEW_URL = "http://www.ahsgh.com/ahghjtweb/web/view";
+    private static final String LIST_URL = "http://www.ahsgh.com/ahghjtweb/web/list";       //列表页
+    private static final String VIEW_URL = "http://www.ahsgh.com/ahghjtweb/web/view";       //项目详情页
     private static final String USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -46,7 +46,7 @@ public class XPathDemo {
 
     public static void main(String[] args) throws Exception {
         /* 1. HttpClient 抓取列表页 */
-        String listHtml = postListPage(1);
+        String listHtml = postListPage(3);
         if (listHtml == null || listHtml.isEmpty()) {
             System.err.println("列表页抓取失败，程序退出");
             return;
@@ -60,8 +60,8 @@ public class XPathDemo {
         List<JXNode> items = listJx.selN("//ul[contains(@class,'tab01open')]//li");
 
         /* 精准定位与模糊定位对比：
-         *   精准：//h2[@class='fl']          —— class 必须完全等于 fl
-         *   模糊：//h2[contains(@class,'fl')] —— class 里包含 fl 即可 */
+         *   精准：//h2[@class='fl']
+         *   模糊：//h2[contains(@class,'fl')]  class 里包含 fl 即可 */
         List<JXNode> preciseTitles = listJx.selN("//ul[contains(@class,'tab01open')]//li//h2[@class='fl']");
         List<JXNode> fuzzyTitles = listJx.selN("//ul[contains(@class,'tab01open')]//li//h2[contains(@class,'fl')]");
         System.out.println("精准定位 h2[@class='fl'] 数量：" + preciseTitles.size()

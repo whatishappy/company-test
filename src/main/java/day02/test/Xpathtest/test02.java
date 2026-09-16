@@ -1,4 +1,4 @@
-package day02;
+package day02.test.Xpathtest;
 
 import day03.PageUtils;
 import org.apache.http.NameValuePair;
@@ -22,7 +22,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,7 +35,7 @@ import java.util.regex.Pattern;
  * @CreateTime: 2026-09-14
  * @Version: 2.0   —— 引入线程池，两层并行
  */
-public class demo_Jsoup {
+public class test02 {
 
     /* 列表页地址（POST） */
     private static final String LIST_URL = "http://www.ahsgh.com/ahghjtweb/web/list";
@@ -55,6 +58,7 @@ public class demo_Jsoup {
     /* ================== 全局共享 HttpClient ================== */
     private static final CloseableHttpClient HTTP_CLIENT = buildHttpClient();
 
+    /*====================http配置信息==========================*/
     private static CloseableHttpClient buildHttpClient() {
         RequestConfig cfg = RequestConfig.custom()
                 .setConnectTimeout(8000)
@@ -163,86 +167,99 @@ public class demo_Jsoup {
     }
 
     /*                        第二层：并行抓详情页                          */
-    private static int crawlAllDetails(String[] pageHtmls) {
+    private static int crawlAllDetails(String[] pageHtmls) throws InterruptedException {
 
         ExecutorService pool = Executors.newFixedThreadPool(DETAIL_THREADS);
-        List<Future<?>> futures = new ArrayList<>();
 
-        // 全局序号：多线程下用 AtomicInteger 安全递增
-        AtomicInteger globalIndex = new AtomicInteger(0);
+        int totalItems = 0;
 
-        // 先在主线程里把每一页的 li 解析出来，再提交详情任务
+        // ★ 最外层：按页循环
         for (int p = 1; p < pageHtmls.length; p++) {
 
             String listHtml = pageHtmls[p];
-            if (listHtml == null) continue;
+            if (listHtml == null) {
+                // 这一页抓失败了，也输出一条分割线，保持结构完整
+                System.out.println("\n==================== 第 " + p + " 页（抓取失败） ====================\n");
+                continue;
+            }
 
             Elements items = Jsoup.parse(listHtml)
-                    .select("ul.tab01open.tab01tca li");        //抓取项目标题
+                    .select("ul.tab01open.tab01tca li");
 
-            /*循环遍历爬取，依次获取   详细介绍、日期、详细链接*/
+            // ★ 页内所有详情任务的结果，按提交顺序存到 futures
+            List<Future<String>> futures = new ArrayList<>();
+
             for (Element item : items) {
 
-                Element h2 = item.select("h2.fl").first();        //项目名称
-                Element iTag = item.select("i.fr").first();         //发布时间
-                Element aTag = item.select("a[href*=url_view]").first();    //详情链接
+                Element h2   = item.select("h2.fl").first();
+                Element iTag = item.select("i.fr").first();
+                Element aTag = item.select("a[href*=url_view]").first();
 
                 if (h2 == null || aTag == null) continue;
 
-                /*============== 解析为String ==============*/
-                /*为防止篡改，使用final 修饰*/
-                final String title = h2.text().trim();  //去除空格
+                final String title       = h2.text().trim();
                 final String publishTime = (iTag == null) ? "未匹配到时间"
                         : parseTimeByRegex(iTag.outerHtml());
-                final String detailUrl = buildDetailUrl(aTag.attr("href"));
+                final String detailUrl   = buildDetailUrl(aTag.attr("href"));
 
-                // 提交一个详情任务
-                futures.add(pool.submit(() -> {
-                    int idx = globalIndex.incrementAndGet();        //提交任务，任务数+1
-                    System.out.print(handleOneDetail(idx, title, publishTime, detailUrl));
-                }));
+                // 提交任务，拿到 Future<String>
+                futures.add(pool.submit(() ->
+                        handleOneDetail(title, publishTime, detailUrl)
+                ));
             }
+
+            // ★ 拼一页的内容
+            StringBuilder pageSb = new StringBuilder(8192);
+            pageSb.append("\n");
+            pageSb.append("==================== 第 ").append(p).append(" 页 ====================\n\n");
+
+            // ★ 按提交顺序取回每条新闻的结果（保证输出顺序和页面顺序一致）
+            for (Future<String> f : futures) {
+                try {
+                    pageSb.append(f.get());   // f.get() 会阻塞，直到这条任务完成
+                    pageSb.append('\n');      // 每条新闻之间空一行
+                    totalItems++;
+                } catch (Exception e) {
+                    pageSb.append("【异常】").append(e.getMessage()).append('\n');
+                }
+            }
+
+            // ★ 整页一次性输出（避免多线程交错）
+            System.out.print(pageSb);
         }
 
-        // 等待所有详情任务结束
-        for (Future<?> f : futures) {
-            try {
-                f.get();
-            } catch (Exception ignore) {
-                // 单个任务异常不影响其它任务
-            }
-        }
         pool.shutdown();
-
-        return globalIndex.get();
+        return totalItems;
     }
+
     /**
      * 处理一条：抓详情 + 解析正文 + 拼装输出字符串。
      * 用 StringBuilder 一次性返回，避免多线程下多行输出互相穿插。
      */
-    private static String handleOneDetail(int idx, String title, String publishTime, String detailUrl) {
+    private static String handleOneDetail(String title, String publishTime, String detailUrl) {
 
         StringBuilder sb = new StringBuilder(1024);
-        sb.append("\n========== 第 ").append(idx).append(" 条 ==========\n");
         sb.append("【标题】：").append(title).append('\n');
         sb.append("【发布时间】：").append(publishTime).append('\n');
         sb.append("【详情链接】：").append(detailUrl).append('\n');
 
-        //打印正文html或正文文本
         try {
             String detailHtml = getDetailPage(detailUrl);
             if (detailHtml != null) {
                 String contentHtml = parseContentHtml(detailHtml);
-                /*sb.append("【正文html】")
-                        .append(contentHtml == null ? "解析失败" : contentHtml).append('\n');*/
+                /* 打印 html 源码（已注释） */
+            /*sb.append("【正文html】")
+                    .append(contentHtml == null ? "解析失败" : contentHtml).append('\n');*/
                 sb.append("【正文详细】：")
-                        .append(contentHtml == null ? "" : Jsoup.parse(contentHtml).text()).append('\n');
+                        .append(contentHtml == null ? "" : Jsoup.parse(contentHtml).text())
+                        .append('\n');
             } else {
                 sb.append("【正文html】详情页抓取失败\n");
             }
         } catch (Exception e) {
             sb.append("【异常】").append(e.getMessage()).append('\n');
         }
+
         return sb.toString();
     }
 

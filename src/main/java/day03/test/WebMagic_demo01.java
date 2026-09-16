@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class wEBmAICtEST implements PageProcessor {
+public class WebMagic_demo01 implements PageProcessor {
 
     private static final Pattern URL_VIEW_PATTERN =
             Pattern.compile("url_view\\('(.*?)',\\s*'(.*?)',\\s*'(.*?)'\\)");       //提取url_view中的参数正则
@@ -83,7 +83,7 @@ public class wEBmAICtEST implements PageProcessor {
 
             Request nextReq = new Request(nextUrl);
             nextReq.putExtra("curPage", next);
-            page.addTargetRequest(nextReq);
+            page.addTargetRequest(nextReq);     //发送新的request请求
         }
     }
 
@@ -160,7 +160,7 @@ public class wEBmAICtEST implements PageProcessor {
         Request first = new Request(url);
         first.putExtra("curPage", 1);
 
-        Spider.create(new wEBmAICtEST())
+        Spider.create(new WebMagic_demo01())
                 .addRequest(first)
                 .thread(1)
                 .run();

@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  */
 public class demo_webMagic {
 
-    /* ===== 练习网站常量 ===== */
+    /* ===== 网站常量 ===== */
     private static final String LIST_URL = "http://www.ahsgh.com/ahghjtweb/web/list";
     private static final String VIEW_URL = "http://www.ahsgh.com/ahghjtweb/web/view";
     private static final String USER_AGENT =
@@ -60,7 +60,7 @@ public class demo_webMagic {
 
     /**
      * 本次演示爬取的页数（不是条数）。
-     *   3   = 只爬前 3 页（演示分页用，跑得快）
+     *   3   = 只爬前 3 页
      *   -1  = 全量爬取（自动使用站点分页信息里的总页数，共 222 页，会爬很久）
      */
     private static final int MAX_PAGES = 3;
@@ -81,7 +81,7 @@ public class demo_webMagic {
         Spider spider = Spider.create(processor)          // 绑定 PageProcessor
                 .addPipeline(pipeline)                    // 绑定 Pipeline
                 .setScheduler(scheduler)                  // 绑定 Scheduler
-                .thread(1)                                // 单线程，练习网站访问间隔已由 Site 控制
+                .thread(4)                      //四个线程抓取
                 .addRequest(buildListRequest());          // 初始 URL：列表页（POST）
 
         System.out.println("========== Spider 启动 ==========");
@@ -192,13 +192,13 @@ public class demo_webMagic {
                         .xpath("//a[@title='尾页']/@href").toString();   // javascript:gotoPage(222);
                 int totalPages = Integer.parseInt(lastPageHref.replaceAll("\\D", ""));  // 只留数字 → 222
                 int limit = MAX_PAGES < 1 ? totalPages : Math.min(MAX_PAGES, totalPages);
-                System.out.println(">>> 站点总页数：" + totalPages + "，本次爬取前 " + limit + " 页");
+                System.out.println(" 站点总页数：" + totalPages + "，本次爬取前 " + limit + " 页");
                 for (int p = 2; p <= limit; p++) {
                     page.addTargetRequest(buildListPageUrl(p));
                 }
             }
 
-            System.out.println(">>> 第 " + curPage + " 页解析到 " + titles.size() + " 条记录，发现 "
+            System.out.println("第 " + curPage + " 页解析到 " + titles.size() + " 条记录，发现 "
                     + detailUrls.size() + " 条详情链接");
         }
 
@@ -218,7 +218,7 @@ public class demo_webMagic {
             /* 正文 html：p 嵌套会被 jsoup 自动闭合拆散成多个直接子 <p>，
              * Xsoup 不支持 position() 函数，这里选出全部直接子 <p>，在 Java 里过滤掉空壳节点再拼接 */
             List<String> allPs = page.getHtml()
-                    .xpath("//div[contains(@class,'article-conca')]/p").all();
+                    .xpath("//div[contains(@class,'article-conca')]//p").all();
             List<String> contentPs = new ArrayList<>();
             for (String p : allPs) {
                 String trimmed = p.trim();
@@ -239,8 +239,7 @@ public class demo_webMagic {
 
         @Override
         public void process(ResultItems resultItems, Task task) {
-            System.out.println("┌────────── Pipeline 收到一页结果 ──────────");
-            System.out.println("│ 下载地址 = " + resultItems.getRequest().getUrl());
+            System.out.println(" 下载地址 = " + resultItems.getRequest().getUrl());
             for (Map.Entry<String, Object> entry : resultItems.getAll().entrySet()) {
                 Object value = entry.getValue();
                 if (value instanceof List) {
@@ -253,7 +252,7 @@ public class demo_webMagic {
                     System.out.println("│ " + entry.getKey() + " = " + value);
                 }
             }
-            System.out.println("└────────────────────────────────────────────");
+            System.out.println("────────────────────────────────────────────");
         }
     }
 }

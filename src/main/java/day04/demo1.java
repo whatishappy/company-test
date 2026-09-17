@@ -1,5 +1,6 @@
 package day04;
 
+import day04.Entity.Info;
 import us.codecraft.webmagic.Page;
 import us.codecraft.webmagic.ResultItems;
 import us.codecraft.webmagic.Site;
@@ -12,30 +13,53 @@ import java.io.StringReader;
 import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Date;
 
 public class demo1 implements PageProcessor {
 
-    private Site site = Site.me()
+    //全局map， Map<列表链接，列表标题>
+    private static Map<String, String> visitedLinks = new ConcurrentHashMap<>();
+
+    //全局统计总爬取数量
+    private static Integer Pagecount=0;
+
+    private final Site site = Site.me()
             .setRetryTimes(3)
             .setSleepTime(1000)
             .setTimeOut(10000)
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-    static Integer PageNo = 0;
+    static AtomicInteger countsql = new AtomicInteger(0);
+    static AtomicInteger count = new AtomicInteger(0);
 
     @Override
     public void process(Page page) {
-        page.putField("SOURCE_NAME", page.getHtml().xpath("//meta[@name='SiteName']/@content").get());
+        /**
+         *将获取的数据通过set方法存入Info对象中
+         * 然后再使用putFiled保存
+         * PipeLine直接通过"info"取出
+         */
+
+        System.out.println("正在解析链接：" + page.getUrl().get());
 
         if (page.getUrl().toString().contains("content/post_")) {
-            String title = page.getHtml().xpath("//div[@class='con']/h3/text()").get();
+            System.out.println("当前解析");
+
+            //获取详细标题
+            String title = page.getHtml().xpath("//div[@class='con']/h3/allText()").get();    //有的标题存放在<h3>标签中的<strong>标签，需要获取全部文本
+            //获取详细正文html
             String content = page.getHtml().xpath("//div[@class='article']/html()").get();
+            //详细时间
             String timeStr = page.getHtml().xpath("//div[@class='massage clearfix']//span[@class='time']/text()").get();
-
-
+            //网站名称
+            String sourceName = page.getHtml().xpath("//meta[@name='SiteName']/@content").get();
 
             // 提取有效时间
             String cleanDate = "";
@@ -47,32 +71,103 @@ public class demo1 implements PageProcessor {
                 }
             }
 
-            // 将提取的数据提交到 field 中
-            page.putField("DETAIL_LINK", page.getUrl().toString());
-            page.putField("DETAIL_TITLE", title);
-            page.putField("DETAIL_CONTENT", content);
-            page.putField("PAGE_TIME", cleanDate);
-            page.putField("CREATE_TIME", cleanDate);
-            page.putField("CREATE_BY", "伍芳正");
-            page.putField("LIST_TITLE", title);
-            //save
-
-
-        } else {
-            // 列表页
-            List<String> links = page.getHtml().xpath("//ul[@class='list']//li//a/@href").all();
-            // 判断是否属于该网站，否则解析网站名称会报错
-            links.removeIf(link -> !link.contains("gdwc.gov.cn"));
-            //去重URL
-            page.addTargetRequests(links);
-
-            // 分页 url
-            // 爬取前三页
-            for (int i = 1; i <= 3; i++) {
-                if (i == 1) page.addTargetRequest("https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/index.html");
-                page.addTargetRequest("https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/index_" + i + ".html");
+            String detailLink = page.getUrl().toString();
+            // 从全局 Map 中获取列表页的标题
+            String listTitle = visitedLinks.get(detailLink);
+            if (listTitle == null || listTitle.isEmpty()) {
+                listTitle = title;
             }
+
+            //封装save
+            Info info = new Info();
+            info.setSOURCE_NAME(sourceName);
+            info.setDETAIL_LINK(detailLink);
+            info.setDETAIL_TITLE(title);
+            info.setDETAIL_CONTENT(content);
+            info.setLIST_TITLE(listTitle);
+            info.setCREATE_BY("伍芳正");
+
+            // 日期字符串转 Date 对象
+            try {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+                if (!cleanDate.isEmpty()) {
+                    info.setPAGE_TIME(sdf.parse(cleanDate));
+                    info.setCREATE_TIME((sdf.parse(cleanDate)));
+                } else {
+                    info.setPAGE_TIME(new Date());
+                    info.setCREATE_TIME(new Date());
+                }
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+
+            // 只提交一个 info 对象
+            page.putField("info", info);
+
+            //解析成功计数器+1
+            count.incrementAndGet();
+            System.out.println("解析成功!已经解析了"+count+"条数据!");
+        } else {
+            // 获取列表页所有的链接和标题
+            List<String> links = page.getHtml().xpath("//ul[@class='list']//li//a/@href").all();
+            List<String> titleList = page.getHtml().xpath("//ul[@class='list']//li//a/text()").all();
+
+            ArrayList<String> newLinks = new ArrayList<>();
+            for (int i = 0; i < links.size(); i++) {
+                String link = links.get(i);
+                String listTitle = (i < titleList.size()) ? titleList.get(i) : "";
+                // 过滤外站链接（https://mp.weixin.qq.com/s/K5Dav0tvh1Bgkg-IjeuYJQ）和非详情页
+
+                if (!link.startsWith("http")) {
+                    if (link.startsWith("/")) {
+                        link = "https://www.gdwc.gov.cn" + link;
+                    } else {
+                        link = "https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/" + link;
+                    }
+                }
+
+
+                // 过滤外站链接和非详情页
+                if (!link.contains("gdwc.gov.cn") || !link.contains("content/post_")) {
+                    System.out.println("非官方链接：" + link);
+                    //标题
+                    String title = page.getHtml().xpath("//div[contains(@class='rich_media_title')]//span/text()").get();
+                    //时间
+                    String time = page.getHtml().xpath("//em[contains(@id='publish_time')]/text()").get();
+                    //获取正文html
+                    String html = page.getHtml().xpath("//div[contain(@id='js_content')]/html").get();
+
+                    continue;
+                }
+
+                // 去重
+                if (visitedLinks.putIfAbsent(link, listTitle) == null) {
+                    newLinks.add(link);
+                } else {
+                    System.out.println("拦截到重复链接：" + link);
+                }
+            }
+
+            page.addTargetRequests(newLinks);
+
+            // 自动翻页逻辑
+            String nextPageUrl = page.getHtml().xpath("//a[@class='next']/@href").get();
+            if (nextPageUrl != null && !nextPageUrl.isEmpty()) {
+                if (!nextPageUrl.startsWith("http")) {
+                    nextPageUrl = "https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/" + nextPageUrl;
+                }
+                // 对“下一页”也执行去重
+                if (visitedLinks.putIfAbsent(nextPageUrl, "下一页") == null) {
+                    System.out.println("发现下一页: " + nextPageUrl);
+                    page.addTargetRequest(nextPageUrl);
+                }
+            } else {
+                System.out.println("已到达最后一页: " + page.getUrl());
+            }
+
+            System.out.println("本页有效连接数：" +  newLinks.size());
         }
+
     }
 
     @Override
@@ -87,55 +182,43 @@ public class demo1 implements PageProcessor {
 
         @Override
         public void process(ResultItems items, Task task) {
-            if (items.get("DETAIL_LINK") == null) return;
 
-            String SOURCE_NAME = items.get("SOURCE_NAME");  // 网站名称
-            String DETAIL_LINK = items.get("DETAIL_LINK");  // 详细链接
-            String DETAIL_TITLE = items.get("DETAIL_TITLE");  // 详细标题
-            String DETAIL_CONTENT = items.get("DETAIL_CONTENT");  // 正文 html
-            String PAGE_TIME = items.get("PAGE_TIME");  // 列表时间
-            String CREATE_TIME = items.get("CREATE_TIME");  // 创建时间
-            String LIST_TITLE = items.get("LIST_TITLE");  // 列表标题
-            String CREATE_BY = items.get("CREATE_BY");  // 创建者名称
+            //获取Info封装后的对象
+            Info info = items.get("info");
+            if (info == null) return; // 说明是列表页，直接跳过
 
-            /**
-             * 由于初步解析得到的时间数据为 String 类型，需要将数据转换成 Date 类型
-             */
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-            Timestamp pageTs = new Timestamp(System.currentTimeMillis());
-            Timestamp createTs = new Timestamp(System.currentTimeMillis());
-            try {
-                if (PAGE_TIME != null && !PAGE_TIME.isEmpty()) {
-                    pageTs = new Timestamp(sdf.parse(PAGE_TIME).getTime());
-                }
-                if (CREATE_TIME != null && !CREATE_TIME.isEmpty()) {
-                    createTs = new Timestamp(sdf.parse(CREATE_TIME).getTime());
-                }
-            } catch (ParseException e) {
-                e.printStackTrace();
-            }
+            String SOURCE_NAME = info.getSOURCE_NAME();
+            String DETAIL_LINK = info.getDETAIL_LINK();
+            String DETAIL_TITLE = info.getDETAIL_TITLE();
+            String DETAIL_CONTENT = info.getDETAIL_CONTENT();
+            String LIST_TITLE = info.getLIST_TITLE();
+            String CREATE_BY = info.getCREATE_BY();
+
+            // 处理日期：将Date类型转换为Timestamp类型
+            Timestamp pageTs = info.getPAGE_TIME() != null ? new Timestamp(info.getPAGE_TIME().getTime()) : new Timestamp(System.currentTimeMillis());
+            Timestamp createTs = info.getCREATE_TIME() != null ? new Timestamp(info.getCREATE_TIME().getTime()) : new Timestamp(System.currentTimeMillis());
 
             try (Connection conn = DriverManager.getConnection(URL, USER, PASS)) {
-
+                //数据库去重
                 int existId = 0;
-                // 先进行查询，查看是否有该链接，有则“更新”，否则“插入”
                 try (PreparedStatement check = conn.prepareStatement(
+                        //先查询有没有重复的详情链接
                         "SELECT ID FROM XIN_XI_INFO_TEST WHERE DETAIL_LINK = ?")) {
                     check.setString(1, DETAIL_LINK);
                     try (ResultSet rs = check.executeQuery()) {
-                        if (rs.next()) {        // 游标下移
-                            existId = rs.getInt(1); // 获得 id
+                        if (rs.next()) {
+                            existId = rs.getInt(1);
                         }
                     }
                 }
 
                 if (existId > 0) {
+                    //如果存在执行更新操作
                     String updateSql = "UPDATE XIN_XI_INFO_TEST SET " +
                             "DETAIL_TITLE = ?, DETAIL_CONTENT = ?, PAGE_TIME = ?, " +
                             "LIST_TITLE = ?, CREATE_BY = ? WHERE ID = ?";
                     try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
                         ps.setString(1, DETAIL_TITLE);
-                        // 大文本 CLOB 字段，如果使用 setString 有大小限制 32kb，转化为字符流输入，防止截断
                         ps.setCharacterStream(2, new StringReader(DETAIL_CONTENT), DETAIL_CONTENT.length());
                         ps.setTimestamp(3, pageTs);
                         ps.setString(4, LIST_TITLE);
@@ -144,7 +227,9 @@ public class demo1 implements PageProcessor {
                         ps.executeUpdate();
                     }
                     System.out.println("更新成功: " + DETAIL_TITLE);
+                    countsql.incrementAndGet(); //更新成功计数器+1
                 } else {
+                    // 插入
                     String insertSql = "INSERT INTO XIN_XI_INFO_TEST " +
                             "(ID, SOURCE_NAME, DETAIL_LINK, DETAIL_TITLE, DETAIL_CONTENT, " +
                             " PAGE_TIME, CREATE_TIME, LIST_TITLE, CREATE_BY) " +
@@ -161,27 +246,23 @@ public class demo1 implements PageProcessor {
                         ps.setString(8, CREATE_BY);
                         ps.executeUpdate();
                     }
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("标题：").append(DETAIL_TITLE).append("\n")
-                            .append("发布时间：").append(PAGE_TIME).append("\n")
-                            .append("正文HTML：").append(DETAIL_CONTENT).append("\n")
-                            .append("创建者名称：").append(CREATE_BY).append("\n");
-
-                    System.out.println(sb);
+                    System.out.println("插入成功: " + DETAIL_TITLE);
+                    countsql.incrementAndGet();     //插入成功计数器+1\
                 }
             } catch (Exception e) {
-                System.out.println("失败: " + DETAIL_LINK);
+                System.out.println("入库失败: " + DETAIL_LINK);
                 e.printStackTrace();
             }
+
+            System.out.println("已成功入库"+countsql+"条数据");
         }
     }
 
     public static void main(String[] args) {
         Spider.create(new demo1())
-                .addUrl("https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/")
+                .addUrl("https://www.gdwc.gov.cn/zfxxgk/zjswcsczz/")    //起始首页链接
                 .addPipeline(new OraclePipeline())
-                .thread(2)
+                .thread(4)
                 .run();
     }
 }

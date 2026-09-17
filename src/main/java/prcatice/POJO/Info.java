@@ -1,15 +1,8 @@
-package day04.Entity;
-
+package prcatice.POJO;
 
 import lombok.Data;
 
 import java.util.Date;
-
-/**
- * @Author: 岑正茂
- * @CreateTime: 2026-09-16
- * @Version: 1.0
- */
 
 @Data
 public class Info {
